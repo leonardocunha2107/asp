@@ -1,0 +1,5 @@
+Source		Distance (m)	Angle (deg)
+1		0.9		-15
+2		1.1		20
+3		1		60
+4		1.2		-55
