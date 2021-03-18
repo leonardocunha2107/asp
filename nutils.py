@@ -1,5 +1,7 @@
 import numpy as np
+from sklearn.decomposition import NMF
 def T(x):
+    x=x.conjugate()
     if len(x.shape)>=3:
         lx=len(x.shape)
         perm=tuple(range(lx-2))+(lx-1,lx-2)
@@ -22,7 +24,7 @@ def covx(A,W,H,cov_b,part,return_covs=False):
     
     ##compute auxiliary quantitities
     
-    pscov_c=(W[:,:,None]*H[None,:,:]).transpose(0,2,1)[:,:,:,None] #FxNxKx1
+    pscov_c=T(W[:,:,None]*H[None,:,:])[:,:,:,None] #FxNxKx1
 
     arrs=[pscov_c[:,:,idxs].sum(axis=2).squeeze() for idxs in part]
     
@@ -42,9 +44,9 @@ def covx(A,W,H,cov_b,part,return_covs=False):
     return cov_x
 
 def generate_params(I,J,K,F,N,part,cb_diagonal=False,cb_distr=(0.01,0.01)):
-    A=np.random.rand(F,I,J)
-    W=np.random.rand(F,K)
-    H=np.random.rand(K,N)
+    A=np.random.rand(F,I,J)+1j*np.random.rand(F,I,J)
+    W=np.random.rand(F,K)#+1j*np.random.rand(F,K)
+    H=np.random.rand(K,N)#+1j*np.random.rand(K,N)
     A,W,H=normalize_parameters(A,W,H,part)
     
     if cb_diagonal:
@@ -75,8 +77,9 @@ def normalize_parameters(A,W,H,part):
     
     F,I,J=A.shape
     
-    norm_a=np.linalg.norm(A,axis=1) ##FxJ
-    norm_a*=np.sign(A[:,0,:])
+    #norm_a=np.linalg.norm(A,axis=1) ##FxJ
+    #norm_a*=np.sign(A[:,0,:])
+    norm_a=np.sqrt(np.sum(np.real(A*np.conj(A)),axis=1))
     Anew=A/norm_a[:,None,:] #
     
     Wnew=np.zeros_like(W)
@@ -93,6 +96,11 @@ def normalize_parameters(A,W,H,part):
     #H=norm_W[:,None]*H
                      
     return Anew,Wnew,Hnew
+def perturbate(srcs,coef_add_noise = 1e-2, coef_mult_noise = 1e-3, coef_mix = .05):
+    srcs=srcs.T
+    matrix = coef_mix * np.ones((srcs.shape[0], srcs.shape[0])) + np.diag((1 - srcs.shape[0] * coef_mix) * np.ones(srcs.shape[0]))
+    perturbated_srcs = np.multiply(srcs, np.random.normal(1, coef_mult_noise, srcs.shape)) + np.random.normal(0, coef_add_noise, srcs.shape)
+    return perturbated_srcs.T
 
 def test_normalize(I,J,K,F,N,part):
     X,s,A,W,H,cb=generate_data(I,J,K,F,N,part)
@@ -100,28 +108,28 @@ def test_normalize(I,J,K,F,N,part):
 
 
     print((np.linalg.norm(covx(A,W,H,cb,part)-covx(An,Wn,Hn,cb,part))))
-    
+
+def squared_module(arr):
+    return np.multiply(arr, arr.conjugate()).real
 def is_div(x,y):
     t=x/y
     return (t-np.log(t)-1).mean()
 
-def is_nmf(s,K,niter=500):
-    F,N=s.shape
+def is_nmf(strue,part,niter=500,nmf_noise=None):
+    F,N,J=strue.shape
+    K=sum([len(p) for p in part])
     W,H=np.ones((F,K)),np.ones((K,N))
-    error=[]
-    for i in tqdm(range(niter)):
-        WH=W@H
-        error.append(is_div(s,WH))
-        
-        Hn=H*(W.T@((WH**-2)*s))/(W.T@(WH**-1))
-        Wn=W*((((WH**-2)*s)@H.T)/
-              ((WH**-1)@H.T))
-        ##normalize
-        wnorm=np.linalg.norm(Wn,axis=0)
-        W=Wn/wnorm[None,:]
-        H=Hn*wnorm[:,None]
+    for i,p in enumerate(part):
+
+        nmf=NMF(len(p),beta_loss='itakura-saito',solver='mu')
+        si=squared_module(strue[:,:,i].T)
+        H[p,:]=nmf.fit_transform(si).T
+        W[:,p]=nmf.components_.T
+    if nmf_noise:
+        W=W+np.random.uniform(0,nmf_noise,W.shape)
+        H=H+np.random.uniform(0,nmf_noise,H.shape)
     
-    return W,H,error
+    return W,H
     
 def em_assertions():
     assert pscov_c.shape==(F,N,K) 

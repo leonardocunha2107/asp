@@ -17,7 +17,7 @@ def crit1(A,W,H,X,cb,part):
 def sdr(s,shat):
     
     #FxNxJ
-    res=(s**2).sum(axis=(0,1))/((s-shat)**2).sum(axis=(0,1))
+    res=(np.absolute(s)**2).sum(axis=(0,1))/(np.absolute(s-shat)**2).sum(axis=(0,1))
     
     return 10*np.log10(res)
                        
@@ -104,8 +104,8 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     assert H.shape==(K,N)
     
     ##M step
-    assert positive(u)
-    
+    #assert positive(u)
+    #print(u)
     
     
     Anew=Rxs@np.linalg.inv(Rss)
