@@ -5,14 +5,15 @@ from tqdm import tqdm
 def    positive(x):
     return (x<0).sum()==0
 
-
 def crit1(A,W,H,X,cb,part):
+
     cx=nutils.covx(A,W,H,cb,part)
+    #nutils.sdp_test(cx)
     det=np.linalg.det(cx)
-    #print(positive(det))
-    res=np.log(det)
-    res+=np.trace(X[:,:,:,None]@X[:,:,None,:]@np.linalg.inv(cx),axis1=-2,axis2=-1)
-    return res.mean(axis=(0,1))
+    reg=np.log(det).mean()
+
+    lh=np.trace(X[:,:,:,None]@X[:,:,None,:]@np.linalg.inv(cx),axis1=-2,axis2=-1).mean()
+    return reg,lh
 
 def sdr(s,shat):
     
@@ -27,25 +28,34 @@ def run(n_iter,X,A,W,H,part,cb=None,covb_callable=None,true_s=None,cb_fix=True,i
     An,Wn,Hn=A,W,H
     
     if true_s is not None: error=np.zeros((n_iter,A.shape[2]))
-    crit_arr=np.zeros(n_iter)
+    crit=[]
     
     for i in tqdm(range(n_iter)):
         if covb_callable is None:
-            shat,An,Wn,Hn,cbnew=em_iter(X,An,Wn,Hn,cb,part,isotropic=isotropic)
-            if not cb_fix: cb=cbnew
+            shat,An,Wn,Hn,cbnew=em_iter(X,An,Wn,Hn,cb,part,isotropic=isotropic)           
+            #print("hey")
+
+            if not cb_fix: 
+                cb=cbnew
+
         else:
             if type(covb_callable) not in [np.ndarray,float,np.array]:
                 cb=np.stack([np.diag(X.shape[-1]*[covb_callable(i)]) for _ in range(F)])
-            else: cb=covb_callable
             shat,An,Wn,Hn,cb=em_iter(X,An,Wn,Hn,cb,part)
 
         if true_s is not None: error[i]=sdr(true_s,shat)
-        crit_arr[i]=crit1(An,Wn,Hn,X,cb,part)
+        assert positive(Wn) and positive(Hn)
+        #print('cb',cb.mean())
+        #print('norms ',np.linalg.norm(Wn),np.log10(np.linalg.norm(Hn)),      np.log10(np.linalg.norm(cb)))
+        #print('isreal',np.imag(W),np.imag(H))
+        
+        crit.append(crit1(An,Wn,Hn,X,cb,part))
 
-    return shat,An,Wn,Hn,cb,(error,crit_arr)
+
+    return shat,An,Wn,Hn,cb,(error,[t[0] for t in crit],[t[1] for t in crit])
 
 def hvar(x):
-    return (x**2).mean(axis=(1,2))/100
+    return (x*np.conj(x)).real.mean(axis=(1,2))/100
 
 def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     EPS=1e-7
@@ -69,7 +79,7 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     pscov_s=np.stack(arrs,axis=-1) [:,:,:,None] #FxNxJx1
 
     # Computing cov_x  A_f is IxJ S_,sfn is psuedo JxJ
-    Ahat=np.zeros((F,I,K))
+    Ahat=np.zeros((F,I,K),dtype=complex)
     for j,idxs in enumerate(part):
         Ahat[:,:,idxs]=A[:,:,j][:,:,None]
     
@@ -78,6 +88,12 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     X=X[:,:,:,None]
     
     cov_x=A@(pscov_s*T(A))+cov_b[:,None,:,:] #if len(cov_b.shape)==3 else cov_b #FxNxIxI
+     
+    if(np.isnan(cov_x).sum()):
+        print('W',W)
+        print('cs',H)
+        raise Error
+     
     
     assert cov_x.shape==(F,N,I,I)
     
@@ -97,7 +113,7 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     Rss=Rss.mean(axis=1)
     #FxIxI
 
-    u=(((chat@T(chat))-(Gc@Ahat)*T(pscov_c)))[:,:,np.arange(K),np.arange(K)] ##JxJxF
+    u=(((chat@T(chat))-(Gc@Ahat)*T(pscov_c)))[:,:,np.arange(K),np.arange(K)].real ##JxJxF
     u+=pscov_c.squeeze() ##F,N,K
     assert u.shape==(F,N,K)
     
@@ -105,13 +121,13 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     
     ##M step
     #assert positive(u)
-    #print(u)
     
     
     Anew=Rxs@np.linalg.inv(Rss)
     Wnew=(T(u)/(H[None,:,:]+EPS)).mean(axis=-1)
     Hnew=(T(u)/(W[:,:,None]+EPS)).mean(axis=0)
     
+
     
     A=A.squeeze()
     cbnew=Rxx-A@T(Rxs)-Rxs@T(A)+A@Rss@T(A)
@@ -121,6 +137,8 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
    
     else:
         cbnew=np.stack([np.diag(np.diag(t)) for t in cbnew])
+    
+    cbnew=cbnew.real
    
     
     
@@ -128,5 +146,6 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     assert all([a.shape==b.shape for a,b in zip((A,W,H,cov_b),(Anew,Wnew,Hnew,cbnew))])
     
     Anew,Wnew,Hnew=nutils.normalize_parameters(Anew,Wnew,Hnew,part)
-    
+        
+        
     return shat.squeeze(),Anew,Wnew,Hnew,cbnew
