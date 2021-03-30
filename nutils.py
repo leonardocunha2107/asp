@@ -72,11 +72,12 @@ def generate_data(I,J,K,F,N,part,cb_diagonal=True,cb_distr=(0.01,0.01)):
     A,W,H,cb=generate_params(I,J,K,F,N,part,cb_diagonal,cb_distr=cb_distr)
     
     sigs=covx(A,W,H,cb,part,True)  ##FxNxJ
-    s=np.zeros((F,N,J))
+    s=np.zeros((F,N,J),dtype=np.complex)
     noise=np.stack([np.random.multivariate_normal(np.zeros(I),t,size=(N)) for t in cb])
     for f in range(F):
         for n in range(N):
-            s[f,n,:]=np.random.multivariate_normal(np.zeros(J),np.diag(sigs[f,n,]))
+            s[f,n,:]=np.random.multivariate_normal(np.zeros(J),np.diag(sigs[f,n,]))+1j* \
+            np.random.multivariate_normal(np.zeros(J),np.diag(sigs[f,n,]))
     
     X=np.squeeze(A[:,None,:,:]@s[:,:,:,None])+noise
     

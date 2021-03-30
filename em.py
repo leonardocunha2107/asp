@@ -27,29 +27,43 @@ def run(n_iter,X,A,W,H,part,cb=None,covb_callable=None,true_s=None,cb_fix=True,i
     
     An,Wn,Hn=A,W,H
     
-    if true_s is not None: error=np.zeros((n_iter,A.shape[2]))
+    if true_s is not None: error=np.zeros((n_iter+1,A.shape[2]))            
+    shat,_,_,_,_=em_iter(X,A,W,H,1e-2*np.stack(X.shape[0]*[np.eye(X.shape[-1])]),part)
+    print(shat.shape,A.shape)
+    #oracle_cb=(X-(A[:,None,:,:]@shat[:,:,:,None]).squeeze()).std(axis=0)
+    #print('ocb',oracle_cb)
+    error[0]=sdr(true_s,shat)
     crit=[]
     
+    
     for i in tqdm(range(n_iter)):
+        print('cb \n',cb.mean())
+
         if covb_callable is None:
             shat,An,Wn,Hn,cbnew=em_iter(X,An,Wn,Hn,cb,part,isotropic=isotropic)           
             #print("hey")
 
             if not cb_fix: 
                 cb=cbnew
+            print('cb \n',cb.mean())
+
 
         else:
             if type(covb_callable) not in [np.ndarray,float,np.array]:
                 cb=np.stack([np.diag(X.shape[-1]*[covb_callable(i)]) for _ in range(F)])
             shat,An,Wn,Hn,cb=em_iter(X,An,Wn,Hn,cb,part)
 
-        if true_s is not None: error[i]=sdr(true_s,shat)
+        if true_s is not None: 
+            error[i+1]=sdr(true_s,shat)
+            print('sdr',error[i])
         assert positive(Wn) and positive(Hn)
-        #print('cb',cb.mean())
-        #print('norms ',np.linalg.norm(Wn),np.log10(np.linalg.norm(Hn)),      np.log10(np.linalg.norm(cb)))
-        #print('isreal',np.imag(W),np.imag(H))
         
-        crit.append(crit1(An,Wn,Hn,X,cb,part))
+        #print('shat norm ',np.linalg.norm(shat,axis=(0,1)))
+        cr=crit1(An,Wn,Hn,X,cb,part)
+        if i>=1 and  cr[0]+cr[1]>crit[-1][0]+crit[-1][1]:
+            print(An,Wn,Hn)
+            raise Error
+        crit.append(cr)
 
 
     return shat,An,Wn,Hn,cb,(error,[t[0] for t in crit],[t[1] for t in crit])
@@ -89,10 +103,6 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     
     cov_x=A@(pscov_s*T(A))+cov_b[:,None,:,:] #if len(cov_b.shape)==3 else cov_b #FxNxIxI
      
-    if(np.isnan(cov_x).sum()):
-        print('W',W)
-        print('cs',H)
-        raise Error
      
     
     assert cov_x.shape==(F,N,I,I)
@@ -124,13 +134,14 @@ def em_iter(X,A,W,H,cov_b,part,isotropic=False):
     
     
     Anew=Rxs@np.linalg.inv(Rss)
-    Wnew=(T(u)/(H[None,:,:]+EPS)).mean(axis=-1)
-    Hnew=(T(u)/(W[:,:,None]+EPS)).mean(axis=0)
+    Wnew=(T(u)/(H[None,:,:])+EPS).mean(axis=-1)
+    Hnew=(T(u)/(W[:,:,None])+EPS).mean(axis=0)
     
 
     
     A=A.squeeze()
     cbnew=Rxx-A@T(Rxs)-Rxs@T(A)+A@Rss@T(A)
+    cbnew=cbnew.real
     
     if isotropic:
         cbnew=np.stack([np.eye(I)*np.trace(t)/I for t in cbnew])
